@@ -1,9 +1,10 @@
 package sourcemap
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
-	"path"
+	"sort"
 	"strings"
 )
 
@@ -26,7 +27,7 @@ type Mapping struct {
 	OriginalName    string
 }
 
-func Read(r io.Reader) (*Map, error) {
+func ReadFrom(r io.Reader) (*Map, error) {
 	d := json.NewDecoder(r)
 	var m Map
 	if err := d.Decode(&m); err != nil {
@@ -48,65 +49,167 @@ func init() {
 	}
 }
 
+func (m *Map) decodeMappings() {
+	if m.decodedMappings != nil {
+		return
+	}
+
+	r := strings.NewReader(m.Mappings)
+	var generatedLine = 1
+	var generatedColumn = 0
+	var originalFile = 0
+	var originalLine = 1
+	var originalColumn = 0
+	var originalName = 0
+	for r.Len() != 0 {
+		b, _ := r.ReadByte()
+		if b == ',' {
+			continue
+		}
+		if b == ';' {
+			generatedLine++
+			generatedColumn = 0
+			continue
+		}
+		r.UnreadByte()
+
+		count := 0
+		readVLQ := func() int {
+			v := 0
+			s := uint(0)
+			for {
+				b, _ := r.ReadByte()
+				o := base64decode[b]
+				if o == 0xff {
+					r.UnreadByte()
+					return 0
+				}
+				v += (o &^ 32) << s
+				if o&32 == 0 {
+					break
+				}
+				s += 5
+			}
+			count++
+			if v&1 != 0 {
+				return -(v >> 1)
+			}
+			return v >> 1
+		}
+		generatedColumn += readVLQ()
+		originalFile += readVLQ()
+		originalLine += readVLQ()
+		originalColumn += readVLQ()
+		originalName += readVLQ()
+
+		switch count {
+		case 1:
+			m.decodedMappings = append(m.decodedMappings, &Mapping{generatedLine, generatedColumn, "", 0, 0, ""})
+		case 4:
+			m.decodedMappings = append(m.decodedMappings, &Mapping{generatedLine, generatedColumn, m.Sources[originalFile], originalLine, originalColumn, ""})
+		case 5:
+			m.decodedMappings = append(m.decodedMappings, &Mapping{generatedLine, generatedColumn, m.Sources[originalFile], originalLine, originalColumn, m.Names[originalName]})
+		}
+	}
+}
+
 func (m *Map) DecodedMappings() []*Mapping {
-	if m.decodedMappings == nil {
-		r := strings.NewReader(m.Mappings)
+	m.decodeMappings()
+	return m.decodedMappings
+}
+
+func (m *Map) Len() int {
+	m.decodeMappings()
+	return len(m.DecodedMappings())
+}
+
+func (m *Map) Less(i, j int) bool {
+	a := m.decodedMappings[i]
+	b := m.decodedMappings[j]
+	return a.GeneratedLine < b.GeneratedLine || (a.GeneratedLine == b.GeneratedLine && a.GeneratedColumn < b.GeneratedColumn)
+}
+
+func (m *Map) Swap(i, j int) {
+	m.decodedMappings[i], m.decodedMappings[j] = m.decodedMappings[j], m.decodedMappings[i]
+}
+
+func (m *Map) WriteTo(w io.Writer) error {
+	if m.Version == 0 {
+		m.Version = 3
+	}
+	if m.decodedMappings != nil {
+		sort.Sort(m)
+		m.Sources = nil
+		fileIndexMap := make(map[string]int)
+		m.Names = nil
+		nameIndexMap := make(map[string]int)
 		var generatedLine = 1
 		var generatedColumn = 0
 		var originalFile = 0
 		var originalLine = 1
 		var originalColumn = 0
 		var originalName = 0
-		for r.Len() != 0 {
-			b, _ := r.ReadByte()
-			if b == ',' {
-				continue
-			}
-			if b == ';' {
+		buf := bytes.NewBuffer(nil)
+		comma := false
+		for _, mapping := range m.decodedMappings {
+			for mapping.GeneratedLine > generatedLine {
+				buf.WriteByte(';')
 				generatedLine++
 				generatedColumn = 0
-				continue
+				comma = false
 			}
-			r.UnreadByte()
+			if comma {
+				buf.WriteByte(',')
+			}
 
-			count := 0
-			readVLQ := func() int {
-				v := 0
-				s := uint(0)
-				for {
-					b, _ := r.ReadByte()
-					o := base64decode[b]
-					if o == 0xff {
-						r.UnreadByte()
-						return 0
-					}
-					v += (o &^ 32) << s
-					if o&32 == 0 {
-						break
-					}
-					s += 5
+			writeVLQ := func(v int) {
+				v <<= 1
+				if v < 0 {
+					v = -v
+					v |= 1
 				}
-				count++
-				if v&1 != 0 {
-					return -(v >> 1)
+				if v >= 32 {
+					buf.WriteByte(base64encode[32|(v&31)])
+					v >>= 5
 				}
-				return v >> 1
+				buf.WriteByte(base64encode[v])
 			}
-			generatedColumn += readVLQ()
-			originalFile += readVLQ()
-			originalLine += readVLQ()
-			originalColumn += readVLQ()
-			originalName += readVLQ()
 
-			switch count {
-			case 1:
-				m.decodedMappings = append(m.decodedMappings, &Mapping{generatedLine, generatedColumn, "", 0, 0, ""})
-			case 4:
-				m.decodedMappings = append(m.decodedMappings, &Mapping{generatedLine, generatedColumn, path.Join(m.SourceRoot, m.Sources[originalFile]), originalLine, originalColumn, ""})
-			case 5:
-				m.decodedMappings = append(m.decodedMappings, &Mapping{generatedLine, generatedColumn, path.Join(m.SourceRoot, m.Sources[originalFile]), originalLine, originalColumn, m.Names[originalName]})
+			writeVLQ(mapping.GeneratedColumn - generatedColumn)
+			generatedColumn = mapping.GeneratedColumn
+
+			if mapping.OriginalFile != "" {
+				fileIndex, ok := fileIndexMap[mapping.OriginalFile]
+				if !ok {
+					fileIndex = len(m.Sources)
+					fileIndexMap[mapping.OriginalFile] = fileIndex
+					m.Sources = append(m.Sources, mapping.OriginalFile)
+				}
+				writeVLQ(fileIndex - originalFile)
+				originalFile = fileIndex
+
+				writeVLQ(mapping.OriginalLine - originalLine)
+				originalLine = mapping.OriginalLine
+
+				writeVLQ(mapping.OriginalColumn - originalColumn)
+				originalColumn = mapping.OriginalColumn
+
+				if mapping.OriginalName != "" {
+					nameIndex, ok := nameIndexMap[mapping.OriginalName]
+					if !ok {
+						nameIndex = len(m.Names)
+						nameIndexMap[mapping.OriginalName] = nameIndex
+						m.Names = append(m.Names, mapping.OriginalName)
+					}
+					writeVLQ(nameIndex - originalName)
+					originalName = nameIndex
+				}
 			}
+
+			comma = true
 		}
+		m.Mappings = buf.String()
 	}
-	return m.decodedMappings
+	enc := json.NewEncoder(w)
+	return enc.Encode(m)
 }
