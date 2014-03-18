@@ -133,82 +133,86 @@ func (m *Map) Swap(i, j int) {
 	m.decodedMappings[i], m.decodedMappings[j] = m.decodedMappings[j], m.decodedMappings[i]
 }
 
+func (m *Map) EncodeMappings() {
+	sort.Sort(m)
+	m.Sources = nil
+	fileIndexMap := make(map[string]int)
+	m.Names = nil
+	nameIndexMap := make(map[string]int)
+	var generatedLine = 1
+	var generatedColumn = 0
+	var originalFile = 0
+	var originalLine = 1
+	var originalColumn = 0
+	var originalName = 0
+	buf := bytes.NewBuffer(nil)
+	comma := false
+	for _, mapping := range m.decodedMappings {
+		for mapping.GeneratedLine > generatedLine {
+			buf.WriteByte(';')
+			generatedLine++
+			generatedColumn = 0
+			comma = false
+		}
+		if comma {
+			buf.WriteByte(',')
+		}
+
+		writeVLQ := func(v int) {
+			v <<= 1
+			if v < 0 {
+				v = -v
+				v |= 1
+			}
+			if v >= 32 {
+				buf.WriteByte(base64encode[32|(v&31)])
+				v >>= 5
+			}
+			buf.WriteByte(base64encode[v])
+		}
+
+		writeVLQ(mapping.GeneratedColumn - generatedColumn)
+		generatedColumn = mapping.GeneratedColumn
+
+		if mapping.OriginalFile != "" {
+			fileIndex, ok := fileIndexMap[mapping.OriginalFile]
+			if !ok {
+				fileIndex = len(m.Sources)
+				fileIndexMap[mapping.OriginalFile] = fileIndex
+				m.Sources = append(m.Sources, mapping.OriginalFile)
+			}
+			writeVLQ(fileIndex - originalFile)
+			originalFile = fileIndex
+
+			writeVLQ(mapping.OriginalLine - originalLine)
+			originalLine = mapping.OriginalLine
+
+			writeVLQ(mapping.OriginalColumn - originalColumn)
+			originalColumn = mapping.OriginalColumn
+
+			if mapping.OriginalName != "" {
+				nameIndex, ok := nameIndexMap[mapping.OriginalName]
+				if !ok {
+					nameIndex = len(m.Names)
+					nameIndexMap[mapping.OriginalName] = nameIndex
+					m.Names = append(m.Names, mapping.OriginalName)
+				}
+				writeVLQ(nameIndex - originalName)
+				originalName = nameIndex
+			}
+		}
+
+		comma = true
+	}
+	m.Mappings = buf.String()
+}
+
 func (m *Map) WriteTo(w io.Writer) error {
 	if m.Version == 0 {
 		m.Version = 3
 	}
 	if m.decodedMappings != nil {
-		sort.Sort(m)
-		m.Sources = nil
-		fileIndexMap := make(map[string]int)
-		m.Names = nil
-		nameIndexMap := make(map[string]int)
-		var generatedLine = 1
-		var generatedColumn = 0
-		var originalFile = 0
-		var originalLine = 1
-		var originalColumn = 0
-		var originalName = 0
-		buf := bytes.NewBuffer(nil)
-		comma := false
-		for _, mapping := range m.decodedMappings {
-			for mapping.GeneratedLine > generatedLine {
-				buf.WriteByte(';')
-				generatedLine++
-				generatedColumn = 0
-				comma = false
-			}
-			if comma {
-				buf.WriteByte(',')
-			}
-
-			writeVLQ := func(v int) {
-				v <<= 1
-				if v < 0 {
-					v = -v
-					v |= 1
-				}
-				if v >= 32 {
-					buf.WriteByte(base64encode[32|(v&31)])
-					v >>= 5
-				}
-				buf.WriteByte(base64encode[v])
-			}
-
-			writeVLQ(mapping.GeneratedColumn - generatedColumn)
-			generatedColumn = mapping.GeneratedColumn
-
-			if mapping.OriginalFile != "" {
-				fileIndex, ok := fileIndexMap[mapping.OriginalFile]
-				if !ok {
-					fileIndex = len(m.Sources)
-					fileIndexMap[mapping.OriginalFile] = fileIndex
-					m.Sources = append(m.Sources, mapping.OriginalFile)
-				}
-				writeVLQ(fileIndex - originalFile)
-				originalFile = fileIndex
-
-				writeVLQ(mapping.OriginalLine - originalLine)
-				originalLine = mapping.OriginalLine
-
-				writeVLQ(mapping.OriginalColumn - originalColumn)
-				originalColumn = mapping.OriginalColumn
-
-				if mapping.OriginalName != "" {
-					nameIndex, ok := nameIndexMap[mapping.OriginalName]
-					if !ok {
-						nameIndex = len(m.Names)
-						nameIndexMap[mapping.OriginalName] = nameIndex
-						m.Names = append(m.Names, mapping.OriginalName)
-					}
-					writeVLQ(nameIndex - originalName)
-					originalName = nameIndex
-				}
-			}
-
-			comma = true
-		}
-		m.Mappings = buf.String()
+		m.EncodeMappings()
 	}
 	enc := json.NewEncoder(w)
 	return enc.Encode(m)
