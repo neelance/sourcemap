@@ -10,10 +10,10 @@ import (
 
 type Map struct {
 	Version         int      `json:"version"`
-	File            string   `json:"file"`
-	SourceRoot      string   `json:"sourceRoot"`
-	Sources         []string `json:"sources"`
-	Names           []string `json:"names"`
+	File            string   `json:"file,omitempty"`
+	SourceRoot      string   `json:"sourceRoot,omitempty"`
+	Sources         []string `json:"sources,omitempty"`
+	Names           []string `json:"names,omitempty"`
 	Mappings        string   `json:"mappings"`
 	decodedMappings []*Mapping
 }
@@ -118,6 +118,15 @@ func (m *Map) DecodedMappings() []*Mapping {
 	return m.decodedMappings
 }
 
+func (m *Map) ClearMappings() {
+	m.Mappings = ""
+	m.decodedMappings = nil
+}
+
+func (m *Map) AddMapping(mapping *Mapping) {
+	m.decodedMappings = append(m.decodedMappings, mapping)
+}
+
 func (m *Map) Len() int {
 	m.decodeMappings()
 	return len(m.DecodedMappings())
@@ -164,7 +173,7 @@ func (m *Map) EncodeMappings() {
 				v = -v
 				v |= 1
 			}
-			if v >= 32 {
+			for v >= 32 {
 				buf.WriteByte(base64encode[32|(v&31)])
 				v >>= 5
 			}
