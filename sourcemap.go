@@ -12,8 +12,8 @@ type Map struct {
 	Version         int      `json:"version"`
 	File            string   `json:"file,omitempty"`
 	SourceRoot      string   `json:"sourceRoot,omitempty"`
-	Sources         []string `json:"sources,omitempty"`
-	Names           []string `json:"names,omitempty"`
+	Sources         []string `json:"sources"`
+	Names           []string `json:"names"`
 	Mappings        string   `json:"mappings"`
 	decodedMappings []*Mapping
 }
