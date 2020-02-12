@@ -7,6 +7,8 @@ import (
 )
 
 const testFile = `{"version":3,"file":"min.js","sourceRoot":"/the/root","sources":["one.js","two.js"],"names":["bar","baz","n"],"mappings":"CAAC,IAAI,IAAM,SAAUA,GAClB,OAAOC,IAAID;CCDb,IAAI,IAAM,SAAUE,GAClB,OAAOA"}` + "\n"
+const testFileWithoutNames = `{"version":3,"file":"min.js","sourceRoot":"/the/root","sources":["one.js","two.js"],"mappings":"CAAC,IAAI,IAAM,SAAUA,GAClB,OAAOC,IAAID;CCDb,IAAI,IAAM,SAAUE,GAClB,OAAOA"}` + "\n"
+const testFileWithoutSources = `{"version":3,"file":"min.js","sourceRoot":"/the/root","names":["bar","baz","n"],"mappings":"CAAC,IAAI,IAAM,SAAUA,GAClB,OAAOC,IAAID;CCDb,IAAI,IAAM,SAAUE,GAClB,OAAOA"}`
 
 func TestReadFrom(t *testing.T) {
 	m, err := ReadFrom(strings.NewReader(testFile))
@@ -55,6 +57,41 @@ func TestWriteTo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if b.String() != testFile {
+		t.Error(b.String())
+	}
+}
+
+func TestWriteToShouldIncludeEmptyNames(t *testing.T) {
+	m, err := ReadFrom(strings.NewReader(testFileWithoutNames))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Names != nil {
+		t.Error("Names expected to be nil")
+	}
+	b := bytes.NewBuffer(nil)
+	if err := m.WriteTo(b); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), `"names":[]`) {
+		t.Error(b.String())
+	}
+}
+
+func TestWriteToShouldIncludeEmptySources(t *testing.T) {
+
+	m, err := ReadFrom(strings.NewReader(testFileWithoutSources))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Sources != nil {
+		t.Error("Sources expected to be nil")
+	}
+	b := bytes.NewBuffer(nil)
+	if err := m.WriteTo(b); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), `"sources":[]`) {
 		t.Error(b.String())
 	}
 }

@@ -223,6 +223,12 @@ func (m *Map) WriteTo(w io.Writer) error {
 	if m.decodedMappings != nil {
 		m.EncodeMappings()
 	}
+	if m.Names == nil {
+		m.Names = make([]string, 0)
+	}
+	if m.Sources == nil {
+		m.Sources = make([]string, 0)
+	}
 	enc := json.NewEncoder(w)
 	return enc.Encode(m)
 }
