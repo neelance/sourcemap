@@ -74,7 +74,7 @@ func TestWriteToShouldIncludeEmptyNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), `"names":[]`) {
-		t.Error(b.String())
+		t.Error(`Source map expected to include '"names":[]'`, "\n", b.String())
 	}
 }
 
@@ -92,6 +92,6 @@ func TestWriteToShouldIncludeEmptySources(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), `"sources":[]`) {
-		t.Error(b.String())
+		t.Error(`Source map expected to include '"sources":[]'`, "\n", b.String())
 	}
 }
